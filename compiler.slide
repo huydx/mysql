@@ -1,0 +1,233 @@
+golangでパーサを書く話
+コンパイラ勉強会
+28 Jan 2017
+
+huydx
+@dxhuy
+
+* 自己紹介
+- ハンドルネーム huydx (@dxhuy)
+- モニタリングシステムとかデプロイシステムを開発
+- 最近はjavaとかgolangとか
+
+.image images/img1.png 100 1000
+
+- ドラゴン本は１ページとか２ページぐらいは読んだ
+
+* そもそもなぜこの勉強会に出たの？
+- 仕事ではときどき必要となる作業にあって
+- 例 1：広告システムのユーザセグメントの組み合わせ
+ - (SET1 AND SET2) OR SET3
+- 例 2：モニタリングシステムのクエリシステム
+- 例 3：静的解析システムを作りために構文解析する必要がある
+- 時系列データのクエリシステムそんなに複雑じゃないはず
+- コンパイラ知らないとつらい時代になった
+
+* という嘘をつきましたが、実際の参加動機はこれ
+.image images/motivation.png 500 1020
+
+Source: http://keens.github.io/blog/2017/01/06/idein_incninyuushashimashita/
+
+* 今日の発表
+- golangでlexer/parserを作るとき、よく使われているデザインパターンを紹介
+- ただの自分のDSLが欲しい人はわざわざコンパイラ理論を勉強しなくてよい
+- Write your own parser is not that hard
+- golangの分かりやすさ
+
+* その前に
+
+* golangとは
+- Typed言語
+- コンパイルが早い（goのコンパイラの話は別の機会で！）
+- 勉強する手間がかからない（素人でも１週間ぐらいならバリバリで書ける）
+- 並列・並行プログラミングをサポートする（by goroutine)
+- 一つのgoroutineは軽いスレッド（goは自分のスケジュラー持っている）。なのでgopherは基本的に積極てきにgoroutineを使います。
+- goroutine間はchannel(ブロッキングキューみたい）を通じて話し合う
+
+* golangのいくつかのパラダイム
+- struct
+.code codes/struct.go
+
+- pointer
+.code codes/pointer.go
+
+- function
+.code codes/function.go
+
+だいたいこれぐらい覚えていただければgolangのコードをバリバリ書けます
+
+* じゃ本題に入る
+- 今日はstdライブラリのtext/templateのパーサのコードを見ながら、何が面白いのかを話したい
+.iframe https://www.youtube.com/embed/HxaD_trXwRE 480 853
+
+* text/templateについて
+- ダメなコードから、Rob Pikeが書き直した
+- 書き直すゴールはコードのメンテーしやすさ、分かりやすさを重視していた
+- text/templateは単純なテンプレートエンジン
+ Something {{ .SomeVariable }} Another thing {{ .Sum 1 2 }}
+- `{{` と `}}` はデリミター
+- デリミターの中は：変数、関数、コンディション（If, Else, Loop)がサポートされます
+
+* なぜtext/templateを
+- コンパイラの実践的ないい例
+- テンプレートエンジンはAST評価部分がそんなに複雑ではないので説明しやすい
+- golangのtext/templateライブラリは分かりやすさを目的にしたものなので、実装を見て、「これぐらいなら俺もパーサなんか1時間で作れる！」の気持ちを持って帰っていただきたい。
+- この発表ではそのライブラリの Lexer と Parser の二つの実装について
+
+* Lexerとは
+- 字句解析
+- 「各字句は何を意味するのかを探しにいく作業」
+- f(文字列）→　セマンティック情報を持つデータ構造の配列（トークン）
+- すごいざっくりlexer
+
+.code codes/slexer.go
+
+* Lexer自分で書くなら何か選択肢あるの？
+- 1.ツールに頼る（yacc, antlrなど）
+- ジェネレーターを使うと良く分からないエラーメッセージ出てつらい
+- ジェネレーターするための他の言語も勉強しないといけない
+- ジェネレートされた結果はでかい
+- ジェネレーター系は複雑の文法を向いているけど、簡単な文法であると「そんな要るの」という気持ち
+
+* Lexer自分で書くなら何か選択肢あるの？
+- 2.正規表現
+- 正規表現が表す「状態スペース」が実際に必要となるものと大きくオーバする（オーバーヘッドが大きい）
+- 遅いときは最適化すづらい
+.image images/regex.png 350 850
+
+* では自分でロジックを書きましょう！
+
+* text/templateのLexer
+- 左から右へ、先読みのトークンをベースにしてトークンのタイプを決める
+- トークンを表現するデータ構造
+
+.code codes/item.go
+
+* Lexerロジック
+- Lexerは基本的にState Machine
+- 入力の文字列の字句を左から1文字づつ移動する
+- 移動するたびに現在にいる場所は「なにか」の状態を持つ
+- 「文法で現わせる言語」→「正規言語（Regular Language)」→　「かならずDFAかNFAで表現できる」
+- 状態は例えば：insideComment, leftDelimiter...など
+
+* Lexerロジック
+- State Machine はだいたいでっかい switch文で頑張るイメージ
+
+.code codes/states.go
+
+- 良く考えたらわざわざ中心のマネージャ的なロジックいらない、あと上のような書き方は状態が増えるとコード面にはスケールしない
+- 一つの状態から次どこに行くというのは、その状態が分かれば良い
+- 一つの状態＝＝コンテキスト＋アクション
+
+
+* Lexerロジック
+- Rob Pikeのかっこいいアイディア：一つの状態＝＝一つの関数
+- その関数はコンテキストを受け取って、次何をやるかをまた関数を返す
+
+.code codes/lexfunc.go
+
+- lexerは現時点の状態情報（どこまで進んだか？先読み文字のスタック？など）
+
+.code codes/lexerstruct.go
+
+* Lex関数
+- 一つのlexXXXX関数は一つのトークンタイプを表す
+- 以下の関数は \`xxx\` （バッククオートされている）字句を処理する
+
+.code codes/lexsample.go
+
+* Lex関数
+- エラーするときも一つの「エラートークン」として処理されている
+
+.code codes/errorlex.go
+
+- lexXXXXはフレクシブルですごい
+- Lex処理をタミネートしたい場合は、nilを返せば良い
+
+* Lexerのヘルパー
+- Lexerの役割の一つは今のいる場所を管理する
+
+.image images/currentpos.png 200 400
+- なのでその「場所」を自由に移動できるのが必須：次の字句に移動、前の字句に移動など
+
+* Lexerのヘルパ
+- next() 次の字句に移動
+- ignore() 現在の字句を無視（スペースなど）
+- backup() 前の字句に戻る
+- peek() 次の字句をちらっと見る（移動はしない）
+- accept() 次の字句をあるものだけを許可する
+- acceptRun() 次の字句をあるものだけを許可して移動する
+
+* Lexerのヘルパ
+.code codes/emit.go
+
+* Lexerのヘルパ
+- emit関数golang channelを面白い使い方
+
+.image images/emit2.png
+
+- 普通はグロバール変数とかを良く使われているけど、グロバール変数とかださいですよね
+- Lexで認識したものをすぐParserで処理できる並行処理（concurrency)
+
+* ここまでの結論
+- 状態を関数で表す：stateFn 。これによりロジックを局所化でき、コードが綺麗。一つのlexXXXX関数は一つのトークンタイプを担当する。
+- channelを使ってデータのやりとりを分かりやすく
+- 次は Parserを見ていきましょう
+
+* Parserとは
+- emit()からもらったトークンと、そのトークンの順番をベースにしてASTをつくる
+- AST (Abstract Syntax Tree)はみんなさんがすでにご存知るが、簡単にいうと簡単にトラバースできるデータ構造 (Walk)
+- 基本的には木っぽいの構造が良く使われているので Abstract Syntax *Tree*
+
+* text/templateのAST
+
+.code codes/ast.go
+
+- Rootだけをみればよい、今回のASTはただのリスト
+
+* いくつかのNodeType
+
+- Nodeのinterface
+
+.code codes/nodeinterface.go
+
+- Node種類：ListNode, NilNode, TextNode, PipeNode, ActionNode...
+
+* Parserのデザイン
+
+.code codes/parser.go
+
+* Parserのデザイン
+- 基本は先のLexerのデザインのそっくり
+- parseXXXX は一つのノードタイプを判定するためのロジック
+- parseXXXX はコンテキスト（AST、場所などなど）を受け取って、Nodeを返す
+- Question: なぜLexerとParserを分けるの？？？
+- Lexerのユニットは「字句」、Parserのユニットは「トークン」
+
+
+* Parserのヘルパー
+- Lexerと同じく、「現在の場所」を制御するヘルパーが必要
+- peek() : 現在のトークンをちらっと見る（移動しない）
+- next() : 次のトークンに移動する
+- backup() : 前のトークンに移動する
+- backup2(), backup3() : 前の２、３トークンに移動する（先読み（Look Ahead)のため))
+
+* ここまでのまとめ
+- Parser書くのもLexerとあんまり変わらない
+- 良さそうASTの選択のが大事（ちゃんとトラバースするときに評価できるように、コンテキストなども考慮しないといけない）
+- 次に今まで勉強できたパータンを用いて、簡単な sqlのSELECT文書いてみましょう
+
+* DEMO
+
+* そのパータンを採用する他のところも見てみましょう
+- prometheusのpromql
+
+* 結論
+- parserを書くのってそんな難しくないでしょうね
+- コードで文法表現するのメリット：
+- 1. デバッグしやすい
+- 2. 最適化しやすい、オーバヘッドがない
+- 3. メンテーしやすい
+- デメリット：
+- 1. 文法を一目でわからない
+- あと書く人のコードセンスによりメンテしやすいのもちょっと言いにくい。。。
